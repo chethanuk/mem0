@@ -225,10 +225,12 @@ def test_lmstudio_api_key_optional(monkeypatch, api_key, expected):
         ("lmstudio", "lmstudio_base_url", "http://127.0.0.1:1234/v1", f"http://{DOCKER_HOST}:1234/v1"),
         # DB/config-router supplied URL without the /v1 suffix gets canonicalized.
         ("lmstudio", "lmstudio_base_url", "http://localhost:1234", f"http://{DOCKER_HOST}:1234/v1"),
-        # Key absent entirely -> Docker-reachable default injected.
+        # Key absent entirely -> Docker-reachable default injected (already has /v1).
         ("lmstudio", "lmstudio_base_url", None, f"http://{DOCKER_HOST}:1234/v1"),
         # A remote LM Studio must be left alone.
         ("lmstudio", "lmstudio_base_url", "http://192.168.1.50:1234/v1", "http://192.168.1.50:1234/v1"),
+        # Remote URL without /v1 is still normalized (normalizer runs on every path).
+        ("lmstudio", "lmstudio_base_url", "http://192.168.1.50:1234", "http://192.168.1.50:1234/v1"),
         # Ollama behaviour must be unchanged.
         ("ollama", "ollama_base_url", "http://localhost:11434", f"http://{DOCKER_HOST}:11434"),
         ("ollama", "ollama_base_url", None, f"http://{DOCKER_HOST}:11434"),
@@ -247,6 +249,20 @@ def test_local_provider_docker_url_rewrite(monkeypatch, provider, url_key, suppl
     fixed = memory_utils._fix_local_base_url(config_section, *entry)
 
     assert fixed["config"][url_key] == expected
+
+
+def test_local_provider_default_path_is_normalized(monkeypatch):
+    """Normalizer must run on the injected default, not only when the key already exists."""
+    monkeypatch.setattr(memory_utils, "_get_docker_host_url", lambda *args, **kwargs: DOCKER_HOST)
+
+    # Force a default WITHOUT /v1 so the normalizer is the only thing that can add it.
+    entry = ("lmstudio_base_url", f"http://{DOCKER_HOST}:1234", "LMSTUDIO_HOST", memory_utils._normalize_lmstudio_url)
+    fixed = memory_utils._fix_local_base_url(
+        {"provider": "lmstudio", "config": {"model": "m"}},
+        *entry,
+    )
+
+    assert fixed["config"]["lmstudio_base_url"] == f"http://{DOCKER_HOST}:1234/v1"
 
 
 # ---------------------------------------------------------------------------

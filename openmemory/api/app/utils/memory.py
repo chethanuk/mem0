@@ -137,8 +137,10 @@ def _fix_local_base_url(config_section, url_key, default_url, host_env_var, norm
                 new_url = url.replace("localhost", docker_host).replace("127.0.0.1", docker_host)
                 provider_config[url_key] = new_url
                 print(f"Adjusted {url_key} from {url} to {new_url}")
-        if normalizer:
-            provider_config[url_key] = normalizer(provider_config[url_key])
+
+    # Always normalize after the URL is resolved (default path or rewritten path).
+    if normalizer:
+        provider_config[url_key] = normalizer(provider_config[url_key])
 
     return config_section
 
