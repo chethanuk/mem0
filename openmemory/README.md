@@ -77,12 +77,13 @@ By default, OpenMemory uses OpenAI (`gpt-4o-mini`) for the LLM and embedder. You
 
 | Variable | Description | Default |
 |---|---|---|
-| `LLM_PROVIDER` | LLM provider (`openai`, `ollama`, `anthropic`, `groq`, `together`, `deepseek`, etc.) | `openai` |
+| `LLM_PROVIDER` | LLM provider (`openai`, `ollama`, `lmstudio`, `anthropic`, `groq`, `together`, `deepseek`, etc.) | `openai` |
 | `LLM_MODEL` | Model name for the LLM provider | `gpt-4o-mini` (OpenAI) / `llama3.1:latest` (Ollama) |
 | `LLM_API_KEY` | API key for the LLM provider | `OPENAI_API_KEY` env var |
 | `LLM_BASE_URL` | Custom base URL for the LLM API | Provider default |
 | `OLLAMA_BASE_URL` | Ollama-specific base URL (takes precedence over `LLM_BASE_URL` for Ollama) | `http://localhost:11434` |
-| `EMBEDDER_PROVIDER` | Embedder provider (defaults to `ollama` when LLM is Ollama, otherwise `openai`) | `openai` |
+| `LMSTUDIO_BASE_URL` | LM Studio-specific base URL (takes precedence over `LLM_BASE_URL` for LM Studio). The `/v1` suffix is added if omitted. | `http://localhost:1234/v1` |
+| `EMBEDDER_PROVIDER` | Embedder provider (follows the LLM provider when it is Ollama or LM Studio, otherwise `openai`) | `openai` |
 | `EMBEDDER_MODEL` | Model name for the embedder | `text-embedding-3-small` (OpenAI) / `nomic-embed-text` (Ollama) |
 | `EMBEDDER_API_KEY` | API key for the embedder provider | `OPENAI_API_KEY` env var |
 | `EMBEDDER_BASE_URL` | Custom base URL for the embedder API | Provider default |
@@ -94,6 +95,20 @@ LLM_MODEL=llama3.1:latest
 EMBEDDER_PROVIDER=ollama
 EMBEDDER_MODEL=nomic-embed-text
 OLLAMA_BASE_URL=http://localhost:11434
+```
+
+**Example: Using LM Studio (fully local)**
+
+Enable LM Studio's local server and load both a chat model and an embedding model.
+Use the model identifiers exactly as LM Studio shows them; there is no default. When
+running in Docker, `localhost` is rewritten to reach the host automatically.
+
+```env
+LLM_PROVIDER=lmstudio
+LLM_MODEL=qwen2.5-7b-instruct
+EMBEDDER_PROVIDER=lmstudio
+EMBEDDER_MODEL=text-embedding-nomic-embed-text-v1.5
+LMSTUDIO_BASE_URL=http://localhost:1234/v1
 ```
 
 **Example: Using Anthropic**

@@ -4,13 +4,14 @@ Memory client utilities for OpenMemory.
 This module provides functionality to initialize and manage the Mem0 memory client
 with automatic configuration management and Docker environment support.
 
-Docker Ollama Configuration:
-When running inside a Docker container and using Ollama as the LLM or embedder provider,
-the system automatically detects the Docker environment and adjusts localhost URLs
-to properly reach the host machine where Ollama is running.
+Docker Local Provider Configuration:
+When running inside a Docker container and using a host-run model server (Ollama or
+LM Studio) as the LLM or embedder provider, the system automatically detects the Docker
+environment and adjusts localhost URLs to properly reach the host machine where the
+provider is running.
 
 Supported Docker host resolution (in order of preference):
-1. OLLAMA_HOST environment variable (if set)
+1. Provider host environment variable, if set (OLLAMA_HOST / LMSTUDIO_HOST)
 2. host.docker.internal (Docker Desktop for Mac/Windows)
 3. Docker bridge gateway IP (typically 172.17.0.1 on Linux)
 4. Fallback to 172.17.0.1
@@ -25,6 +26,9 @@ Example configuration that will be automatically adjusted:
         }
     }
 }
+
+The same adjustment applies to LM Studio via its "lmstudio_base_url" key, whose URLs are
+additionally normalized to the OpenAI-compatible "/v1" suffix LM Studio serves.
 """
 
 import hashlib
@@ -47,23 +51,23 @@ def _get_config_hash(config_dict):
     return hashlib.md5(config_str.encode()).hexdigest()
 
 
-def _get_docker_host_url():
+def _get_docker_host_url(host_env_var='OLLAMA_HOST'):
     """
     Determine the appropriate host URL to reach host machine from inside Docker container.
     Returns the best available option for reaching the host from inside a container.
     """
     # Check for custom environment variable first
-    custom_host = os.environ.get('OLLAMA_HOST')
+    custom_host = os.environ.get(host_env_var)
     if custom_host:
-        print(f"Using custom Ollama host from OLLAMA_HOST: {custom_host}")
+        print(f"Using custom host from {host_env_var}: {custom_host}")
         return custom_host.replace('http://', '').replace('https://', '').split(':')[0]
-    
+
     # Check if we're running inside Docker
     if not os.path.exists('/.dockerenv'):
         # Not in Docker, return localhost as-is
         return "localhost"
-    
-    print("Detected Docker environment, adjusting host URL for Ollama...")
+
+    print("Detected Docker environment, adjusting host URL for local provider...")
     
     # Try different host resolution strategies
     host_candidates = []
@@ -99,31 +103,57 @@ def _get_docker_host_url():
     return host_candidates[0]
 
 
-def _fix_ollama_urls(config_section):
+def _normalize_lmstudio_url(url):
     """
-    Fix Ollama URLs for Docker environment.
+    Canonicalize an LM Studio base URL to the OpenAI-compatible "/v1" endpoint.
+    Accepts both "http://host:1234" and "http://host:1234/v1".
+    """
+    url = url.rstrip("/")
+    if not url.endswith("/v1"):
+        url = f"{url}/v1"
+    return url
+
+
+def _fix_local_base_url(config_section, url_key, default_url, host_env_var, normalizer=None):
+    """
+    Fix a host-run provider's base URL for the Docker environment.
     Replaces localhost URLs with appropriate Docker host URLs.
-    Sets default ollama_base_url if not provided.
+    Sets default url_key if not provided.
     """
     if not config_section or "config" not in config_section:
         return config_section
-    
-    ollama_config = config_section["config"]
-    
-    # Set default ollama_base_url if not provided
-    if "ollama_base_url" not in ollama_config:
-        ollama_config["ollama_base_url"] = "http://host.docker.internal:11434"
+
+    provider_config = config_section["config"]
+
+    # Set default base URL if not provided
+    if url_key not in provider_config:
+        provider_config[url_key] = default_url
     else:
-        # Check for ollama_base_url and fix if it's localhost
-        url = ollama_config["ollama_base_url"]
+        # Check for the provider's base URL and fix if it's localhost
+        url = provider_config[url_key]
         if "localhost" in url or "127.0.0.1" in url:
-            docker_host = _get_docker_host_url()
+            docker_host = _get_docker_host_url(host_env_var)
             if docker_host != "localhost":
                 new_url = url.replace("localhost", docker_host).replace("127.0.0.1", docker_host)
-                ollama_config["ollama_base_url"] = new_url
-                print(f"Adjusted Ollama URL from {url} to {new_url}")
-    
+                provider_config[url_key] = new_url
+                print(f"Adjusted {url_key} from {url} to {new_url}")
+        if normalizer:
+            provider_config[url_key] = normalizer(provider_config[url_key])
+
     return config_section
+
+
+# Providers that may run on the Docker host: url key, Docker-reachable default,
+# host override env var, and an optional URL normalizer.
+_LOCAL_PROVIDER_URLS = {
+    "ollama": ("ollama_base_url", "http://host.docker.internal:11434", "OLLAMA_HOST", None),
+    "lmstudio": (
+        "lmstudio_base_url",
+        "http://host.docker.internal:1234/v1",
+        "LMSTUDIO_HOST",
+        _normalize_lmstudio_url,
+    ),
+}
 
 
 def reset_memory_client():
@@ -135,14 +165,34 @@ def reset_memory_client():
 
 # --- LLM provider config factories ---
 
-def _build_ollama_llm_config(model, api_key, base_url, ollama_base_url):
+def _build_ollama_llm_config(model, api_key, base_url, ollama_base_url, lmstudio_base_url):
     config = {"model": model or "llama3.1:latest"}
     # OLLAMA_BASE_URL takes precedence, then LLM_BASE_URL, then default
     config["ollama_base_url"] = ollama_base_url or base_url or "http://localhost:11434"
     return config
 
 
-def _build_openai_llm_config(model, api_key, base_url, ollama_base_url):
+def _build_lmstudio_llm_config(model, api_key, base_url, ollama_base_url, lmstudio_base_url):
+    # LM Studio model ids are specific to the models loaded on the user's machine,
+    # so there is no sensible default to fall back to.
+    if not model:
+        raise ValueError(
+            "LLM_MODEL environment variable is required when using LLM_PROVIDER='lmstudio'. "
+            "Set LLM_MODEL to the model identifier shown in LM Studio."
+        )
+    config = {"model": model}
+    # LMSTUDIO_BASE_URL takes precedence, then LLM_BASE_URL, then default
+    config["lmstudio_base_url"] = _normalize_lmstudio_url(
+        lmstudio_base_url or base_url or "http://localhost:1234/v1"
+    )
+    # LM Studio ignores the API key; the SDK supplies a placeholder. Only pass one
+    # through when the user is fronting LM Studio with a proxy that checks keys.
+    if api_key:
+        config["api_key"] = api_key
+    return config
+
+
+def _build_openai_llm_config(model, api_key, base_url, ollama_base_url, lmstudio_base_url):
     config = {
         "model": model or "gpt-4o-mini",
         "api_key": api_key or "env:OPENAI_API_KEY",
@@ -154,11 +204,12 @@ def _build_openai_llm_config(model, api_key, base_url, ollama_base_url):
 
 _LLM_CONFIG_FACTORIES = {
     "ollama": _build_ollama_llm_config,
+    "lmstudio": _build_lmstudio_llm_config,
     "openai": _build_openai_llm_config,
 }
 
 
-def _create_llm_config(provider, model, api_key, base_url, ollama_base_url):
+def _create_llm_config(provider, model, api_key, base_url, ollama_base_url, lmstudio_base_url):
     """Build LLM config using registered provider factory or generic fallback."""
     base_config = {
         "temperature": 0.1,
@@ -167,7 +218,7 @@ def _create_llm_config(provider, model, api_key, base_url, ollama_base_url):
 
     factory = _LLM_CONFIG_FACTORIES.get(provider)
     if factory:
-        base_config.update(factory(model, api_key, base_url, ollama_base_url))
+        base_config.update(factory(model, api_key, base_url, ollama_base_url, lmstudio_base_url))
     else:
         # Generic provider (anthropic, groq, together, deepseek, etc.)
         if not model:
@@ -184,13 +235,30 @@ def _create_llm_config(provider, model, api_key, base_url, ollama_base_url):
 
 # --- Embedder provider config factories ---
 
-def _build_ollama_embedder_config(model, api_key, base_url, ollama_base_url, llm_base_url):
+def _build_ollama_embedder_config(model, api_key, base_url, ollama_base_url, llm_base_url, lmstudio_base_url):
     config = {"model": model or "nomic-embed-text"}
     config["ollama_base_url"] = base_url or ollama_base_url or llm_base_url or "http://localhost:11434"
     return config
 
 
-def _build_openai_embedder_config(model, api_key, base_url, ollama_base_url, llm_base_url):
+def _build_lmstudio_embedder_config(model, api_key, base_url, ollama_base_url, llm_base_url, lmstudio_base_url):
+    # As with the LLM, the embedding model id depends on what is loaded in LM Studio.
+    if not model:
+        raise ValueError(
+            "EMBEDDER_MODEL environment variable is required when using EMBEDDER_PROVIDER='lmstudio'. "
+            "Set EMBEDDER_MODEL to the embedding model identifier shown in LM Studio."
+        )
+    config = {"model": model}
+    # EMBEDDER_BASE_URL takes precedence, then LMSTUDIO_BASE_URL, then LLM_BASE_URL
+    config["lmstudio_base_url"] = _normalize_lmstudio_url(
+        base_url or lmstudio_base_url or llm_base_url or "http://localhost:1234/v1"
+    )
+    if api_key:
+        config["api_key"] = api_key
+    return config
+
+
+def _build_openai_embedder_config(model, api_key, base_url, ollama_base_url, llm_base_url, lmstudio_base_url):
     config = {
         "model": model or "text-embedding-3-small",
         "api_key": api_key or "env:OPENAI_API_KEY",
@@ -202,15 +270,16 @@ def _build_openai_embedder_config(model, api_key, base_url, ollama_base_url, llm
 
 _EMBEDDER_CONFIG_FACTORIES = {
     "ollama": _build_ollama_embedder_config,
+    "lmstudio": _build_lmstudio_embedder_config,
     "openai": _build_openai_embedder_config,
 }
 
 
-def _create_embedder_config(provider, model, api_key, base_url, ollama_base_url, llm_base_url):
+def _create_embedder_config(provider, model, api_key, base_url, ollama_base_url, llm_base_url, lmstudio_base_url):
     """Build embedder config using registered provider factory or generic fallback."""
     factory = _EMBEDDER_CONFIG_FACTORIES.get(provider)
     if factory:
-        config = factory(model, api_key, base_url, ollama_base_url, llm_base_url)
+        config = factory(model, api_key, base_url, ollama_base_url, llm_base_url, lmstudio_base_url)
     else:
         if not model:
             raise ValueError(
@@ -333,6 +402,7 @@ def get_default_memory_config():
     llm_api_key = os.environ.get('LLM_API_KEY')
     llm_base_url = os.environ.get('LLM_BASE_URL')
     ollama_base_url = os.environ.get('OLLAMA_BASE_URL')
+    lmstudio_base_url = os.environ.get('LMSTUDIO_BASE_URL')
 
     llm_config = _create_llm_config(
         provider=llm_provider,
@@ -340,11 +410,16 @@ def get_default_memory_config():
         api_key=llm_api_key,
         base_url=llm_base_url,
         ollama_base_url=ollama_base_url,
+        lmstudio_base_url=lmstudio_base_url,
     )
     print(f"Auto-detected LLM provider: {llm_provider}")
 
-    # Detect embedder provider from environment variables
-    embedder_provider = os.environ.get('EMBEDDER_PROVIDER', llm_provider if llm_provider == 'ollama' else 'openai').lower()
+    # Detect embedder provider from environment variables. Host-run providers serve both
+    # the LLM and the embedder, so the embedder follows the LLM provider by default.
+    embedder_provider = os.environ.get(
+        'EMBEDDER_PROVIDER',
+        llm_provider if llm_provider in ('ollama', 'lmstudio') else 'openai',
+    ).lower()
     embedder_model = os.environ.get('EMBEDDER_MODEL')
     embedder_api_key = os.environ.get('EMBEDDER_API_KEY')
     embedder_base_url = os.environ.get('EMBEDDER_BASE_URL')
@@ -356,6 +431,7 @@ def get_default_memory_config():
         base_url=embedder_base_url,
         ollama_base_url=ollama_base_url,
         llm_base_url=llm_base_url,
+        lmstudio_base_url=lmstudio_base_url,
     )
     print(f"Auto-detected embedder provider: {embedder_provider}")
 
@@ -464,11 +540,12 @@ def get_memory_client(custom_instructions: str = None):
         if instructions_to_use:
             config["custom_fact_extraction_prompt"] = instructions_to_use
 
-        # Fix Ollama URLs for Docker environment (applies to both env-var defaults and DB overrides)
-        if config.get("llm", {}).get("provider") == "ollama":
-            config["llm"] = _fix_ollama_urls(config["llm"])
-        if config.get("embedder", {}).get("provider") == "ollama":
-            config["embedder"] = _fix_ollama_urls(config["embedder"])
+        # Fix host-run provider URLs for Docker environment (applies to both env-var
+        # defaults and DB overrides)
+        for section in ("llm", "embedder"):
+            entry = _LOCAL_PROVIDER_URLS.get(config.get(section, {}).get("provider"))
+            if entry:
+                config[section] = _fix_local_base_url(config[section], *entry)
 
         # ALWAYS parse environment variables in the final config
         # This ensures that even default config values like "env:OPENAI_API_KEY" get parsed

@@ -75,6 +75,7 @@ def test_lmstudio_llm_config_uses_lmstudio_base_url(monkeypatch):
     """LLM_PROVIDER=lmstudio must produce a config the mem0 SDK can dial."""
     monkeypatch.setenv("LLM_PROVIDER", "lmstudio")
     monkeypatch.setenv("LLM_MODEL", "qwen2.5-7b-instruct")
+    monkeypatch.setenv("EMBEDDER_MODEL", "text-embedding-nomic-embed-text-v1.5")
     monkeypatch.setenv("LMSTUDIO_BASE_URL", LMSTUDIO_DEFAULT_URL)
 
     config = get_default_memory_config()
@@ -115,6 +116,7 @@ def test_lmstudio_llm_base_url_precedence(monkeypatch, lmstudio_base_url, llm_ba
     """LMSTUDIO_BASE_URL > LLM_BASE_URL > default (mirrors the Ollama chain)."""
     monkeypatch.setenv("LLM_PROVIDER", "lmstudio")
     monkeypatch.setenv("LLM_MODEL", "qwen2.5-7b-instruct")
+    monkeypatch.setenv("EMBEDDER_MODEL", "text-embedding-nomic-embed-text-v1.5")
     if lmstudio_base_url:
         monkeypatch.setenv("LMSTUDIO_BASE_URL", lmstudio_base_url)
     if llm_base_url:
@@ -182,6 +184,15 @@ def test_lmstudio_requires_model(monkeypatch, provider_env, model_env):
         get_default_memory_config()
 
 
+def test_lmstudio_llm_without_embedder_model_fails_loudly(monkeypatch):
+    """Better a clear error than silently embedding via OpenAI (the #6246 symptom)."""
+    monkeypatch.setenv("LLM_PROVIDER", "lmstudio")
+    monkeypatch.setenv("LLM_MODEL", "qwen2.5-7b-instruct")
+
+    with pytest.raises(ValueError, match="EMBEDDER_MODEL"):
+        get_default_memory_config()
+
+
 @pytest.mark.parametrize(
     "api_key, expected",
     [
@@ -193,6 +204,7 @@ def test_lmstudio_api_key_optional(monkeypatch, api_key, expected):
     """Stock LM Studio ignores the key; the SDK fills the "lm-studio" placeholder."""
     monkeypatch.setenv("LLM_PROVIDER", "lmstudio")
     monkeypatch.setenv("LLM_MODEL", "qwen2.5-7b-instruct")
+    monkeypatch.setenv("EMBEDDER_MODEL", "text-embedding-nomic-embed-text-v1.5")
     if api_key:
         monkeypatch.setenv("LLM_API_KEY", api_key)
 

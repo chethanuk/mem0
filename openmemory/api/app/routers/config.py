@@ -15,6 +15,7 @@ class LLMConfig(BaseModel):
     max_tokens: int = Field(..., description="Maximum tokens to generate")
     api_key: Optional[str] = Field(None, description="API key or 'env:API_KEY' to use environment variable")
     ollama_base_url: Optional[str] = Field(None, description="Base URL for Ollama server (e.g., http://host.docker.internal:11434)")
+    lmstudio_base_url: Optional[str] = Field(None, description="Base URL for LM Studio server (e.g., http://host.docker.internal:1234/v1)")
 
 class LLMProvider(BaseModel):
     provider: str = Field(..., description="LLM provider name")
@@ -24,6 +25,7 @@ class EmbedderConfig(BaseModel):
     model: str = Field(..., description="Embedder model name")
     api_key: Optional[str] = Field(None, description="API key or 'env:API_KEY' to use environment variable")
     ollama_base_url: Optional[str] = Field(None, description="Base URL for Ollama server (e.g., http://host.docker.internal:11434)")
+    lmstudio_base_url: Optional[str] = Field(None, description="Base URL for LM Studio server (e.g., http://host.docker.internal:1234/v1)")
 
 class EmbedderProvider(BaseModel):
     provider: str = Field(..., description="Embedder provider name")
