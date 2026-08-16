@@ -209,6 +209,7 @@
                               "components/vectordbs/dbs/pinecone",
                               "components/vectordbs/dbs/mongodb",
                               "components/vectordbs/dbs/oracledb",
+                              "components/vectordbs/dbs/clickhouse",
                               "components/vectordbs/dbs/azure",
                               "components/vectordbs/dbs/azure_mysql",
                               "components/vectordbs/dbs/redis",
