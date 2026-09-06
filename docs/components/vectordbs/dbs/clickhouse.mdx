@@ -1,0 +1,74 @@
+---
+title: "ClickHouse"
+description: "Use ClickHouse as a vector store in Mem0 for scalable similarity search."
+---
+
+[ClickHouse](https://clickhouse.com/) is an open-source columnar database with vector search
+support. Mem0 stores embeddings in a `ReplacingMergeTree` table keyed on `id`, which gives
+upsert/update semantics on every write.
+
+### Requirements
+
+- A running ClickHouse server (HTTP interface on port `8123` by default)
+- The `clickhouse-connect` driver
+
+<CodeGroup>
+```bash Python
+pip install clickhouse-connect
+```
+</CodeGroup>
+
+### Usage
+
+<CodeGroup>
+```python Python
+import os
+from mem0 import Memory
+
+os.environ["OPENAI_API_KEY"] = "sk-xx"
+
+config = {
+    "vector_store": {
+        "provider": "clickhouse",
+        "config": {
+            "collection_name": "mem0",
+            "embedding_model_dims": 1536,
+            "host": "localhost",
+            "port": 8123,
+            "username": "default",
+            "password": "",
+            "database": "default",
+            "secure": False,
+        },
+    }
+}
+
+m = Memory.from_config(config)
+messages = [
+    {"role": "user", "content": "I'm planning to watch a movie tonight. Any recommendations?"},
+    {"role": "assistant", "content": "How about thriller movies? They can be quite engaging."},
+    {"role": "user", "content": "I'm not a big fan of thriller movies but I love sci-fi movies."},
+    {"role": "assistant", "content": "Got it! I'll avoid thriller recommendations and suggest sci-fi movies in the future."},
+]
+m.add(messages, user_id="alice", metadata={"category": "movies"})
+```
+</CodeGroup>
+
+### Configuration options
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `host` | `str` | `"localhost"` | ClickHouse server host |
+| `port` | `int` | `8123` | ClickHouse HTTP port |
+| `username` | `str` | `"default"` | ClickHouse username |
+| `password` | `str` | `""` | ClickHouse password |
+| `database` | `str` | `"default"` | Database name |
+| `collection_name` | `str` | `"mem0"` | Table name for the collection |
+| `embedding_model_dims` | `int` | `1536` | Embedding dimensions |
+| `secure` | `bool` | `False` | Use HTTPS/SSL |
+| `distance_metric` | `str` | `"cosine"` | `cosine`, `l2`, or `dot` |
+
+All connection parameters can also be set via environment variables
+(`CLICKHOUSE_HOST`, `CLICKHOUSE_PORT`, `CLICKHOUSE_USERNAME`, `CLICKHOUSE_PASSWORD`,
+`CLICKHOUSE_DATABASE`, `CLICKHOUSE_SECURE`), which are used when the corresponding config
+value is not provided.
